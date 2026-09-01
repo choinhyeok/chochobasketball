@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>5대5 풀코트 농구</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap');
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #14100C;
+    font-family: 'Noto Sans KR', sans-serif;
+    overflow: hidden;
+  }
+  #wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; width:100%; }
+  #stage { position:relative; width:100%; max-width:960px; aspect-ratio: 900/560; }
+  canvas { width:100%; height:100%; display:block; background:#2C3E50; border-radius:10px; border:1px solid #1B2631; }
+  .overlay {
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; color:#F5F3ED; background:#241B12; border-radius:10px; padding:24px;
+  }
+  .hidden { display:none !important; }
+  .title { font-family:'Black Han Sans',sans-serif; font-size:clamp(26px,6vw,44px); color:#FF9C33; margin:0 0 6px; letter-spacing:1px; text-shadow:0 3px 0 #8A4E0F; }
+  .subtitle { font-size:14px; color:#C9BCA9; margin:0 0 18px; line-height:1.7; }
+  .btn { font-family:'Black Han Sans',sans-serif; background:#FF9C33; color:#3A2308; border:none; padding:12px 34px; font-size:17px; border-radius:30px; cursor:pointer; letter-spacing:1px; box-shadow:0 4px 0 #B96E14; }
+  .btn:active { transform: translateY(3px); box-shadow:0 1px 0 #B96E14; }
+  .result-num { font-family:'Black Han Sans',sans-serif; font-size:38px; color:#fff; margin:4px 0 6px; }
+  .howto { font-size:12px; color:#9C8E7A; margin-top:14px; line-height:1.85; text-align:left; background:#332417; padding:12px 16px; border-radius:10px; max-width:440px; }
+  .howto b { color:#FF9C33; }
+  .flash { position:absolute; top:32%; left:0; right:0; text-align:center; font-family:'Black Han Sans',sans-serif; font-size:28px; letter-spacing:1px; pointer-events:none; opacity:0; text-shadow:0 3px 0 rgba(0,0,0,0.35); }
+  #selectScreen { justify-content:flex-start; overflow-y:auto; padding:18px 16px; }
+  .posRow { width:100%; max-width:640px; margin-bottom:10px; text-align:left; }
+  .posLabel { font-size:12px; color:#FF9C33; font-weight:700; margin:0 0 5px 2px; }
+  .cardGrid { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; }
+  .card {
+    background:#332417; border:2px solid transparent; border-radius:8px; padding:7px 6px;
+    cursor:pointer; text-align:left; color:#F5F3ED;
+  }
+  .card:active { transform:translateY(1px); }
+  .card.selected { border-color:#FF9C33; background:#4A3115; }
+  .card .cname { font-size:11.5px; font-weight:700; display:block; margin-bottom:3px; }
+  .card .cstats { font-size:9.5px; color:#B9A98F; line-height:1.5; }
+  .selectFooter { margin-top:10px; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .selectHint { font-size:12px; color:#C9BCA9; min-height:16px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="c" width="900" height="560"></canvas>
+    <div class="flash" id="flash"></div>
+
+    <div class="overlay" id="selectScreen">
+      <div class="title" style="font-size:26px;">내 팀 선수 선택</div>
+      <p class="subtitle" style="margin-bottom:10px;">포지션마다 한 명씩, 총 5명을 골라주세요.<br/>상대 팀은 남은 선수 중 포지션에 맞게 자동으로 뽑혀요.</p>
+      <div id="posRows"></div>
+      <div class="selectFooter">
+        <div class="selectHint" id="selectHint"></div>
+        <button class="btn" id="startBtn" style="margin-top:2px;">경기 시작</button>
+      </div>
+      <p class="howto">
+        <b>공격</b> — 방향키 이동 &nbsp;|&nbsp; D 슛 게이지(🔴30·🟠50·🟡70·🟢90%) &nbsp;|&nbsp; S 패스 &nbsp;|&nbsp; A 화려한 드리블<br/>
+        <b>수비</b> — 맨투맨으로 자동 마크(패스하면 마크 대상도 전환) &nbsp;|&nbsp; D 누르고 있으면 자동으로 볼 든 선수 따라감<br/>
+        &nbsp;&nbsp;S 스틸 시도 &nbsp;|&nbsp; F 블락 시도 &nbsp;|&nbsp; A 누르고 있으면 스프린트<br/>
+        경기 시작 전 <b>점프볼 게이지</b>로 첫 공격권을 가져오세요!
+      </p>
+    </div>
+
+    <div class="overlay hidden" id="endScreen">
+      <div class="title" id="endTitle">경기 종료</div>
+      <div class="result-num" id="endScore">0 : 0</div>
+      <button class="btn" id="retryBtn">다시 하기</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const HUD_H = 46;
+
+const selectScreen = document.getElementById('selectScreen');
+const posRowsEl = document.getElementById('posRows');
+const selectHintEl = document.getElementById('selectHint');
+const endScreen = document.getElementById('endScreen');
+const endTitle = document.getElementById('endTitle');
+const endScoreEl = document.getElementById('endScore');
+const flashEl = document.getElementById('flash');
+
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function lerp(a,b,t){ return a + (b-a)*t; }
+function rand(a,b){ return a + Math.random()*(b-a); }
+function dist(a,b){ return Math.hypot(a.cx-b.cx, a.cy-b.cy); }
+
+// ---------- court mapping ----------
+// Note: true NBA regulation ratio is 94:50 (~1.88:1). This side-view uses the
+// screen's vertical axis for both court width AND hoop height, so we can't hit
+// the exact ratio without losing room for the rim/backboard — this is the
+// closest realistic compromise (~2.85:1). A true top-down camera could match
+// the exact ratio if you'd prefer that instead.
+const courtLeftPx=80, courtRightPx=W-80;
+const bandTopPx=190, bandBottomPx=450;
+function w2s(cx,cy){
+  return { x: lerp(courtLeftPx,courtRightPx,cx/100), y: lerp(bandTopPx,bandBottomPx,cy/100) };
+}
+const HOOP_L = 7, HOOP_R = 93, HOOP_CY = 50;
+const RIM_OFFSET_PX = 80;
+
+// ---------- roster pool (original archetypes, not real athletes) ----------
+const POSITIONS = ['PG','SG','SF','PF','C'];
+const POS_LABEL = { PG:'포인트가드 (PG)', SG:'슈팅가드 (SG)', SF:'스몰포워드 (SF)', PF:'파워포워드 (PF)', C:'센터 (C)' };
+const ROSTER = [
+  { name:'슈팅왕',     pos:'PG', three:0.61, mid:0.52, rim:0.34, speed:1.05, def:0.34 },
+  { name:'패스왕',     pos:'PG', three:0.47, mid:0.52, rim:0.30, speed:1.18, def:0.36 },
+  { name:'올라운더왕', pos:'PG', three:0.47, mid:0.47, rim:0.42, speed:1.10, def:0.42 },
+  { name:'수비왕',     pos:'PG', three:0.38, mid:0.41, rim:0.40, speed:1.10, def:0.56 },
+  { name:'파워왕',     pos:'PG', three:0.32, mid:0.38, rim:0.54, speed:1.00, def:0.42 },
+
+  { name:'슈팅왕',     pos:'SG', three:0.61, mid:0.52, rim:0.43, speed:1.05, def:0.38 },
+  { name:'패스왕',     pos:'SG', three:0.47, mid:0.52, rim:0.38, speed:1.18, def:0.41 },
+  { name:'올라운더왕', pos:'SG', three:0.47, mid:0.47, rim:0.53, speed:1.10, def:0.47 },
+  { name:'수비왕',     pos:'SG', three:0.38, mid:0.41, rim:0.50, speed:1.10, def:0.63 },
+  { name:'파워왕',     pos:'SG', three:0.32, mid:0.38, rim:0.68, speed:1.00, def:0.47 },
+
+  { name:'슈팅왕',     pos:'SF', three:0.54, mid:0.52, rim:0.47, speed:1.00, def:0.43 },
+  { name:'패스왕',     pos:'SF', three:0.42, mid:0.52, rim:0.41, speed:1.12, def:0.45 },
+  { name:'올라운더왕', pos:'SF', three:0.42, mid:0.47, rim:0.58, speed:1.05, def:0.53 },
+  { name:'수비왕',     pos:'SF', three:0.34, mid:0.41, rim:0.55, speed:1.05, def:0.70 },
+  { name:'파워왕',     pos:'SF', three:0.28, mid:0.38, rim:0.74, speed:0.95, def:0.53 },
+
+  { name:'슈팅왕',     pos:'PF', three:0.43, mid:0.46, rim:0.51, speed:0.92, def:0.44 },
+  { name:'패스왕',     pos:'PF', three:0.34, mid:0.46, rim:0.45, speed:1.03, def:0.47 },
+  { name:'올라운더왕', pos:'PF', three:0.34, mid:0.42, rim:0.63, speed:0.97, def:0.55 },
+  { name:'수비왕',     pos:'PF', three:0.27, mid:0.36, rim:0.60, speed:0.97, def:0.73 },
+  { name:'파워왕',     pos:'PF', three:0.22, mid:0.34, rim:0.81, speed:0.87, def:0.55 },
+
+  { name:'슈팅왕',     pos:'C',  three:0.27, mid:0.40, rim:0.60, speed:0.85, def:0.51 },
+  { name:'패스왕',     pos:'C',  three:0.21, mid:0.40, rim:0.53, speed:0.95, def:0.54 },
+  { name:'올라운더왕', pos:'C',  three:0.21, mid:0.37, rim:0.74, speed:0.89, def:0.63 },
+  { name:'수비왕',     pos:'C',  three:0.17, mid:0.32, rim:0.70, speed:0.89, def:0.84 },
+  { name:'파워왕',     pos:'C',  three:0.14, mid:0.30, rim:0.88, speed:0.81, def:0.63 }
+];
+
+// signature badge per archetype "type" (2K-style passive perk, original design)
+const BADGES = {
+  '슈팅왕':   { name:'데드아이',   desc:'컨테스트 중에도 3점 페널티 절반' },
+  '패스왕':   { name:'프리 스프린트', desc:'스프린트해도 스태미나 소모 없음' },
+  '올라운더왕': { name:'클러치',    desc:'경기 막판 1분, 모든 슛 확률 +5%p' },
+  '수비왕':   { name:'락다운',     desc:'스틸·블락 확률 대폭 상승' },
+  '파워왕':   { name:'파워 피니시', desc:'골밑에서는 컨테스트 페널티 절반' }
+};
+for (const p of ROSTER){ p.badge = BADGES[p.name]; }
+
+let mySelection = { PG:null, SG:null, SF:null, PF:null, C:null };
+
+function buildSelectUI(){
+  posRowsEl.innerHTML = '';
+  for (const pos of POSITIONS){
+    const row = document.createElement('div');
+    row.className = 'posRow';
+    const label = document.createElement('div');
+    label.className = 'posLabel';
+    label.textContent = POS_LABEL[pos];
+    row.appendChild(label);
+    const grid = document.createElement('div');
+    grid.className = 'cardGrid';
+    ROSTER.filter(p=>p.pos===pos).forEach(p=>{
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<span class="cname">${p.name}</span><span class="cstats">3점 ${Math.round(p.three*100)} · 미드 ${Math.round(p.mid*100)} · 골밑 ${Math.round(p.rim*100)}<br/>🏅 ${p.badge.name}</span>`;
+      card.addEventListener('click', ()=>{
+        mySelection[pos] = p;
+        grid.querySelectorAll('.card').forEach(c=>c.classList.remove('selected'));
+        card.classList.add('selected');
+        updateSelectHint();
+      });
+      grid.appendChild(card);
+    });
+    row.appendChild(grid);
+    posRowsEl.appendChild(row);
+  }
+}
+function updateSelectHint(){
+  const filled = POSITIONS.filter(p=>mySelection[p]).length;
+  selectHintEl.textContent = filled<5 ? `${filled}/5명 선택됨` : '5명 모두 선택 완료! 경기 시작을 눌러주세요';
+}
+
+function pickOpponentRoster(){
+  const chosen = {};
+  for (const pos of POSITIONS){
+    const options = ROSTER.filter(p=>p.pos===pos && p.name!==mySelection[pos].name);
+    chosen[pos] = options[Math.floor(Math.random()*options.length)];
+  }
+  return chosen;
+}
+
+let myRoster = null, oppRoster = null;
+
+let state = 'select'; // select | playing | over
+let last = 0;
+let clock = 240; // 4 min
+let scoreBlue=0, scoreRed=0;
+
+const BLUE_HOME = [ {cx:55,cy:50}, {cx:65,cy:20}, {cx:65,cy:80}, {cx:85,cy:35}, {cx:85,cy:65} ];
+const RED_HOME  = [ {cx:45,cy:50}, {cx:35,cy:20}, {cx:35,cy:80}, {cx:15,cy:35}, {cx:15,cy:65} ];
+
+let blue = [], red = [];
+let possession = 'blue';
+let ballHandlerIdx = 0;
+
+let passAnim = null;
+let shotAnim = null;
+
+let gaugeActive = false, gaugeStart = 0;
+const OSC_PERIOD = 0.85;
+
+const keysHeld = {};
+let flashyTimer = { blue:0, red:0 };
+let redShotClock = 0;
+let shotClock = 24;
+
+let particles = [];
+let netRipple = { left:0, right:0 };
+
+function makeTeams(){
+  const order = ['PG','SG','SF','PF','C'];
+  blue = BLUE_HOME.map((s,i)=>{
+    const p = myRoster[order[i]];
+    return { cx:s.cx, cy:s.cy, i, stats:p, name:p.name, stamina:100 };
+  });
+  red = RED_HOME.map((s,i)=>{
+    const p = oppRoster[order[i]];
+    return { cx:s.cx, cy:s.cy, i, stats:p, name:p.name, stamina:100 };
+  });
+}
+
+function resetPossession(team){
+  possession = team;
+  ballHandlerIdx = 0;
+  if (team==='blue'){ blue[0].cx=50; blue[0].cy=50; }
+  else { red[0].cx=50; red[0].cy=50; }
+  passAnim=null; shotAnim=null; gaugeActive=false;
+  redShotClock = rand(4,8);
+  shotClock = 24;
+}
+
+function resolveJumpBall(){
+  gaugeActive = false;
+  const frac = gaugeFrac();
+  const zone = zoneOf(frac);
+  const won = Math.random() < zone.mult;
+  showFlash(won ? `점프볼 승리! (${zone.label})` : `점프볼 패배 (${zone.label})`, won ? '#5DCAA5' : '#E24B4A');
+  resetPossession(won ? 'blue' : 'red');
+  state = 'playing';
+}
+
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  const filled = POSITIONS.every(p=>mySelection[p]);
+  if (!filled){ updateSelectHint(); return; }
+  myRoster = { ...mySelection };
+  oppRoster = pickOpponentRoster();
+  makeTeams();
+  clock=240; scoreBlue=0; scoreRed=0; particles=[]; netRipple={left:0,right:0};
+  selectScreen.classList.add('hidden');
+  state = 'jumpball';
+});
+document.getElementById('retryBtn').addEventListener('click', ()=>{
+  endScreen.classList.add('hidden');
+  mySelection = { PG:null, SG:null, SF:null, PF:null, C:null };
+  buildSelectUI(); updateSelectHint();
+  selectScreen.classList.remove('hidden');
+  state='select';
+});
+buildSelectUI(); updateSelectHint();
+
+function showFlash(text, color){
+  flashEl.textContent = text;
+  flashEl.style.color = color;
+  flashEl.style.transition = 'none';
+  flashEl.style.opacity = '1';
+  flashEl.style.transform = 'translateY(0) scale(1)';
+  requestAnimationFrame(()=>{
+    flashEl.style.transition = 'opacity 0.9s ease, transform 0.9s ease';
+    flashEl.style.opacity = '0';
+    flashEl.style.transform = 'translateY(-12px) scale(1.06)';
+  });
+}
+function spawnParticles(x,y,color,n){
+  for (let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, sp = rand(30,120);
+    particles.push({x,y,vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-50, life:rand(0.3,0.6), maxLife:0.6, color});
+  }
+}
+
+// ---------- gauge / shooting (2K-style fill meter with contest-aware window) ----------
+const METER_FILL_TIME = 0.8;
+function gaugeFrac(){
+  const el = (performance.now()-gaugeStart)/1000;
+  return clamp(el/METER_FILL_TIME, 0, 1.15);
+}
+function zoneOf(frac, contested){
+  const greenLo = contested ? 0.84 : 0.80;
+  const greenHi = contested ? 0.90 : 0.94;
+  const yLo = greenLo-0.12, yHi = greenHi+0.11;
+  const oLo = 0.5, oHi = yHi+0.12;
+  if (frac>=greenLo && frac<=greenHi) return { mult:0.90, color:'#5DCAA5', label:'90%' };
+  if (frac>=yLo && frac<=yHi) return { mult:0.70, color:'#FAC775', label:'70%' };
+  if (frac>=oLo && frac<=oHi) return { mult:0.50, color:'#EF9F27', label:'50%' };
+  return { mult:0.30, color:'#E24B4A', label:'30%' };
+}
+function isContested(shooter, defTeamArr){
+  let bestD = Infinity;
+  for (const d of defTeamArr) bestD = Math.min(bestD, dist(shooter,d));
+  return bestD < 9;
+}
+
+function shotTypeFor(cx, hoopCx){
+  const d = Math.abs(hoopCx-cx);
+  if (d < 12) return 'rim';
+  if (d < 30) return 'mid';
+  return 'three';
+}
+
+function nearestDefenderDef(shooter, defTeamArr){
+  let bestD=Infinity, bestDef=0;
+  for (const d of defTeamArr){
+    const dd = dist(shooter,d);
+    if (dd<bestD){ bestD=dd; bestDef=d.stats.def; }
+  }
+  const proximity = clamp(1-bestD/22, 0, 1); // closer defender matters more
+  return bestDef*proximity;
+}
+
+function attemptPlayerShot(){
+  if (possession!=='blue' || shotAnim || passAnim) return;
+  if (!gaugeActive) return;
+  gaugeActive = false;
+  const frac = gaugeFrac();
+  const zone = zoneOf(frac);
+  const shooter = blue[ballHandlerIdx];
+  const type = shotTypeFor(shooter.cx, HOOP_R);
+  const defFactor = nearestDefenderDef(shooter, red);
+  const prob = clamp(shooter.stats[type]*zone.mult*(1-defFactor*0.35), 0.02, 0.97);
+  const success = Math.random() < prob;
+  showFlash(`${zone.label} 게이지!`, zone.color);
+  shotAnim = { team:'blue', shooterIdx: ballHandlerIdx, fromCx:shooter.cx, fromCy:shooter.cy,
+    toCx:HOOP_R, toCy:HOOP_CY, t:0, duration:0.85, success, shotType:type };
+}
+function attemptAiShot(team){
+  const arr = team==='blue' ? blue : red;
+  const defArr = team==='blue' ? red : blue;
+  const hoopCx = team==='blue' ? HOOP_R : HOOP_L;
+  const shooter = arr[ballHandlerIdx];
+  const type = shotTypeFor(shooter.cx, hoopCx);
+  const defFactor = nearestDefenderDef(shooter, defArr);
+  const baseProb = shooter.stats[type]*0.65*(1-defFactor*0.35);
+  const success = Math.random() < clamp(baseProb,0.03,0.9);
+  shotAnim = { team, shooterIdx: ballHandlerIdx, fromCx:shooter.cx, fromCy:shooter.cy,
+    toCx:hoopCx, toCy:HOOP_CY, t:0, duration:0.85, success, shotType:type };
+}
+
+function resolveShot(){
+  const s = shotAnim;
+  const scoredTeam = s.team;
+  const pts = s.shotType==='three' ? 3 : 2;
+  if (s.success){
+    if (scoredTeam==='blue'){ scoreBlue+=pts; netRipple.right=1; } else { scoreRed+=pts; netRipple.left=1; }
+    showFlash(scoredTeam==='blue' ? `득점! +${pts}` : `상대 득점 +${pts}`, scoredTeam==='blue' ? '#5DCAA5' : '#E24B4A');
+    spawnParticles(w2s(s.toCx,s.toCy).x, w2s(s.toCx,s.toCy).y-90, '#FF9C33', 18);
+    resetPossession(scoredTeam==='blue' ? 'red' : 'blue');
+  } else {
+    showFlash('림아웃!', '#F5F3ED');
+    resetPossession(scoredTeam==='blue' ? 'red' : 'blue');
+  }
+  shotAnim = null;
+}
+
+// ---------- pass ----------
+function attemptPass(){
+  if (possession!=='blue' || shotAnim || passAnim) return;
+  const me = blue[ballHandlerIdx];
+  let best=-1, bestD=Infinity;
+  for (let i=0;i<blue.length;i++){
+    if (i===ballHandlerIdx) continue;
+    const d = dist(me, blue[i]);
+    if (d<bestD){ bestD=d; best=i; }
+  }
+  if (best<0) return;
+  passAnim = { team:'blue', fromIdx: ballHandlerIdx, toIdx: best, t:0, duration:0.22 };
+}
+
+// ---------- defense actions ----------
+function attemptSteal(){
+  if (possession!=='red' || shotAnim || passAnim) return;
+  const defender = blue[ballHandlerIdx];
+  const handler = red[ballHandlerIdx];
+  if (dist(defender,handler) > 7){ showFlash('너무 멀어요!', '#9C8E7A'); return; }
+  const chance = clamp(0.22 + defender.stats.def*0.35, 0.08, 0.65);
+  if (Math.random() < chance){
+    possession = 'blue';
+    showFlash('스틸!', '#5DCAA5');
+    redShotClock = rand(4,8);
+  } else {
+    showFlash('스틸 실패', '#E24B4A');
+  }
+}
+function attemptBlock(){
+  if (possession!=='red' || !shotAnim || shotAnim.team!=='red'){ showFlash('블락 타이밍이 아니에요', '#9C8E7A'); return; }
+  const defender = blue[shotAnim.shooterIdx];
+  const shooter = red[shotAnim.shooterIdx];
+  if (dist(defender,shooter) > 8){ showFlash('너무 멀어요!', '#9C8E7A'); return; }
+  const chance = clamp(0.15 + defender.stats.def*0.4, 0.05, 0.55);
+  if (Math.random() < chance){
+    showFlash('블락!!', '#5DCAA5');
+    const sp = w2s(shotAnim.fromCx, shotAnim.fromCy);
+    spawnParticles(sp.x, sp.y-40, '#5DCAA5', 16);
+    shotAnim = null;
+    resetPossession('blue');
+  } else {
+    showFlash('블락 실패', '#E24B4A');
+  }
+}
+
+// ---------- keyboard ----------
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  if (['arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
+  if (state==='jumpball'){
+    if (k==='d' && !e.repeat){ gaugeActive = true; gaugeStart = performance.now(); }
+    return;
+  }
+  if (state!=='playing') return;
+  if (['arrowup','arrowdown','arrowleft','arrowright'].includes(k)) keysHeld[k]=true;
+
+  if (possession==='blue'){
+    if (k==='d' && !e.repeat && !shotAnim && !passAnim){ gaugeActive = true; gaugeStart = performance.now(); }
+    if (k==='s' && !e.repeat) attemptPass();
+    if (k==='a' && !e.repeat) flashyTimer.blue = 0.45;
+  } else {
+    if (k==='d') keysHeld['d'] = true;      // hold to auto-mark the ball handler
+    if (k==='a') keysHeld['a'] = true;      // hold to sprint
+    if (k==='s' && !e.repeat) attemptSteal();
+    if (k==='f' && !e.repeat) attemptBlock();
+  }
+});
+window.addEventListener('keyup', e=>{
+  const k = e.key.toLowerCase();
+  if (['arrowup','arrowdown','arrowleft','arrowright'].includes(k)) keysHeld[k]=false;
+  if (k==='d'){
+    if (state==='jumpball' && gaugeActive) resolveJumpBall();
+    else if (gaugeActive) attemptPlayerShot();
+    keysHeld['d'] = false;
+  }
+  if (k==='a') keysHeld['a'] = false;
+});
+
+// ---------- AI helpers ----------
+const SPEED_MULT = 0.8;
+function moveToward(p, tx, ty, speed, dt){
+  const dx=tx-p.cx, dy=ty-p.cy, d=Math.hypot(dx,dy);
+  if (d<0.4) return;
+  const step = Math.min(d, speed*SPEED_MULT*dt);
+  p.cx += dx/d*step; p.cy += dy/d*step;
+  p.cx = clamp(p.cx,3,97); p.cy = clamp(p.cy,4,96);
+}
+
+function nearestRedIdxTo(pt){
+  let best=0,bd=Infinity;
+  for (let i=0;i<red.length;i++){ const d=dist(red[i],pt); if(d<bd){bd=d;best=i;} }
+  return best;
+}
+
+// ---------- update ----------
+function update(dt){
+  clock -= dt;
+  if (clock<=0){ clock=0; endGame(); return; }
+
+  if (flashyTimer.blue>0) flashyTimer.blue-=dt;
+  if (flashyTimer.red>0) flashyTimer.red-=dt;
+  if (netRipple.left>0) netRipple.left=Math.max(0,netRipple.left-dt*1.6);
+  if (netRipple.right>0) netRipple.right=Math.max(0,netRipple.right-dt*1.6);
+
+  // player movement (arrow keys always drive the "controlled" unit)
+  if (!shotAnim){
+    let dx=0, dy=0;
+    if (keysHeld['arrowleft']) dx-=1;
+    if (keysHeld['arrowright']) dx+=1;
+    if (keysHeld['arrowup']) dy-=1;
+    if (keysHeld['arrowdown']) dy+=1;
+    const len=Math.hypot(dx,dy);
+    const me = blue[ballHandlerIdx]; // my controlled player: ball handler on offense, assigned marker on defense
+
+    if (possession==='blue' && !passAnim){
+      if (len>0){
+        dx/=len; dy/=len;
+        const speedBoost = flashyTimer.blue>0 ? 1.5 : 1;
+        const spd = 22*speedBoost*me.stats.speed;
+        me.cx = clamp(me.cx+dx*spd*SPEED_MULT*dt,3,97);
+        me.cy = clamp(me.cy+dy*spd*SPEED_MULT*dt,4,96);
+      }
+    } else if (possession==='red'){
+      if (keysHeld['d']){
+        // hold D to auto-mark: move straight toward whoever has the ball
+        const target = red[ballHandlerIdx];
+        const sprint = keysHeld['a'] ? 1.4 : 1;
+        moveToward(me, target.cx, target.cy, 20*sprint*me.stats.speed, dt);
+      } else if (len>0){
+        dx/=len; dy/=len;
+        const sprint = keysHeld['a'] ? 1.4 : 1;
+        const spd = 22*sprint*me.stats.speed;
+        me.cx = clamp(me.cx+dx*spd*SPEED_MULT*dt,3,97);
+        me.cy = clamp(me.cy+dy*spd*SPEED_MULT*dt,4,96);
+      }
+    }
+  }
+
+  // off-ball blue teammates go to home slots; defenders man-mark red (fixed index matchups)
+  for (let i=0;i<blue.length;i++){
+    if (possession==='blue'){
+      if (i!==ballHandlerIdx && !passAnim) moveToward(blue[i], BLUE_HOME[i].cx, BLUE_HOME[i].cy, 13, dt);
+    } else {
+      if (i!==ballHandlerIdx){
+        const mark = red[i] || red[0];
+        moveToward(blue[i], lerp(mark.cx,HOOP_R,0.28), mark.cy, 14, dt);
+      }
+    }
+  }
+
+  // red team AI
+  if (possession==='red'){
+    redShotClock -= dt;
+    if (!shotAnim){
+      const p = red[ballHandlerIdx];
+      moveToward(p, HOOP_L+10, 50, 12, dt);
+      for (let i=0;i<red.length;i++){
+        if (i!==ballHandlerIdx) moveToward(red[i], RED_HOME[i].cx, RED_HOME[i].cy, 12, dt);
+      }
+      const distToHoop = Math.abs(p.cx-HOOP_L);
+      if (redShotClock<=0 || distToHoop<10){
+        attemptAiShot('red');
+      }
+    }
+  } else {
+    for (let i=0;i<red.length;i++){
+      const target = blue[i] || blue[0];
+      moveToward(red[i], lerp(target.cx,HOOP_L,0.3), target.cy, 14, dt);
+    }
+    // passive AI steal chance against me
+    if (!shotAnim && !passAnim && flashyTimer.blue<=0){
+      const defender = red[ballHandlerIdx];
+      const handler = blue[ballHandlerIdx];
+      if (dist(defender,handler) < 5 && Math.random() < 0.045*dt*60){
+        possession='red';
+        showFlash('가로채기!', '#E24B4A');
+        redShotClock = rand(4,8);
+      }
+    }
+  }
+
+  // pass animation
+  if (passAnim){
+    passAnim.t += dt/passAnim.duration;
+    if (passAnim.t>=1){ ballHandlerIdx = passAnim.toIdx; passAnim=null; }
+  }
+  // shot animation
+  if (shotAnim){
+    shotAnim.t += dt/shotAnim.duration;
+    if (shotAnim.t>=1) resolveShot();
+  }
+
+  for (let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.life-=dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=200*dt;
+    if (p.life<=0) particles.splice(i,1);
+  }
+}
+
+function endGame(){
+  state='over';
+  const won = scoreBlue>scoreRed;
+  const tie = scoreBlue===scoreRed;
+  endTitle.textContent = tie ? '무승부' : (won ? '승리!' : '패배...');
+  endTitle.style.color = tie ? '#F5F3ED' : (won ? '#5DCAA5' : '#E24B4A');
+  endScoreEl.textContent = `블루 ${scoreBlue} : ${scoreRed} 레드`;
+  endScreen.classList.remove('hidden');
+}
+
+// ---------- draw ----------
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+
+function drawCourt(){
+  ctx.fillStyle='#20303F';
+  ctx.fillRect(0,HUD_H,W,H-HUD_H);
+  ctx.fillStyle='#B5723A';
+  roundRect(courtLeftPx-14, bandTopPx-18, courtRightPx-courtLeftPx+28, bandBottomPx-bandTopPx+80, 6);
+  ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=2;
+  roundRect(courtLeftPx-14, bandTopPx-18, courtRightPx-courtLeftPx+28, bandBottomPx-bandTopPx+80, 6);
+  ctx.stroke();
+
+  const mid = w2s(50,50);
+  ctx.beginPath(); ctx.moveTo(mid.x, bandTopPx-18); ctx.lineTo(mid.x, bandBottomPx+62); ctx.stroke();
+  ctx.beginPath(); ctx.arc(mid.x, mid.y, 26, 0, Math.PI*2); ctx.stroke();
+
+  ctx.beginPath();
+  roundRect(courtLeftPx-14, bandTopPx-18, courtRightPx-courtLeftPx+28, bandBottomPx-bandTopPx+80, 0);
+  ctx.stroke();
+
+  // key (paint) + free-throw circle + 3pt arc, sized to real NBA proportions
+  const xScale = (courtRightPx-courtLeftPx)/100; // px per world-length-unit (94ft court)
+  const yScale = (bandBottomPx-bandTopPx)/100;   // px per world-width-unit (50ft court)
+  const keyHalfW = 16/50*100/2;   // world units
+  const keyLen   = 19/94*100;     // world units
+  const threeR_x = 23.75/94*100*xScale;
+  const threeR_y = 23.75/50*100*yScale;
+
+  for (const hc of [HOOP_L,HOOP_R]){
+    const dir = hc<50 ? 1 : -1;
+    const baseline = w2s(hc,50);
+    const keyNear = w2s(hc, 50-keyHalfW);
+    const keyFar  = w2s(hc + dir*keyLen, 50+keyHalfW);
+    ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=2;
+    ctx.strokeRect(Math.min(keyNear.x,keyFar.x), Math.min(keyNear.y,keyFar.y),
+      Math.abs(keyFar.x-keyNear.x), Math.abs(keyFar.y-keyNear.y));
+
+    const ftCenter = w2s(hc+dir*keyLen, 50);
+    ctx.beginPath(); ctx.arc(ftCenter.x, ftCenter.y, Math.abs(keyHalfW*yScale), 0, Math.PI*2); ctx.stroke();
+
+    ctx.beginPath();
+    if (dir>0){ ctx.ellipse(baseline.x, baseline.y, threeR_x, threeR_y, 0, -Math.PI/2, Math.PI/2); }
+    else { ctx.ellipse(baseline.x, baseline.y, threeR_x, threeR_y, 0, Math.PI/2, Math.PI*1.5); }
+    ctx.stroke();
+  }
+}
+
+function drawHoop(hoopCx){
+  const p = w2s(hoopCx,50);
+  const rimY = p.y - RIM_OFFSET_PX;
+  const dir = hoopCx<50 ? 1 : -1;
+  const teamColor = hoopCx<50 ? '#D64545' : '#3E6BE0';
+  const teamDark  = hoopCx<50 ? '#8E2C2C' : '#2A4A9E';
+
+  ctx.strokeStyle=teamDark; ctx.lineWidth=8;
+  ctx.beginPath(); ctx.moveTo(p.x-dir*4, p.y+20); ctx.lineTo(p.x-dir*4, rimY-32); ctx.stroke();
+
+  ctx.fillStyle='#F5F3ED';
+  roundRect(p.x-dir*4-5, rimY-44, 10, 50, 2); ctx.fill();
+  ctx.strokeStyle=teamColor; ctx.lineWidth=2;
+  roundRect(p.x-dir*4-5, rimY-44, 10, 50, 2); ctx.stroke();
+  const rippleSide = hoopCx<50 ? netRipple.left : netRipple.right;
+  if (rippleSide>0){ ctx.fillStyle=`rgba(255,209,102,${rippleSide*0.6})`; roundRect(p.x-dir*4-5, rimY-44, 10, 50, 2); ctx.fill(); }
+
+  ctx.strokeStyle=teamColor; ctx.lineWidth=4;
+  ctx.beginPath(); ctx.moveTo(p.x-14, rimY); ctx.lineTo(p.x+14, rimY); ctx.stroke();
+  ctx.strokeStyle='#FF6B35'; ctx.lineWidth=2.4;
+  ctx.beginPath(); ctx.moveTo(p.x-14, rimY); ctx.lineTo(p.x+14, rimY); ctx.stroke();
+
+  ctx.strokeStyle='rgba(255,255,255,0.75)'; ctx.lineWidth=1.1;
+  for (let i=0;i<=5;i++){
+    const t=i/5, x0=lerp(p.x-14,p.x+14,t);
+    const ripple = rippleSide>0 ? Math.sin(t*Math.PI)*rippleSide*7 : 0;
+    ctx.beginPath(); ctx.moveTo(x0,rimY); ctx.quadraticCurveTo(p.x+ripple*0.3, rimY+14, lerp(p.x-6,p.x+6,t)+ripple*0.2, rimY+24); ctx.stroke();
+  }
+}
+
+function drawPlayer(p, color, dark, isControlled, jumpPx){
+  const s = w2s(p.cx,p.cy);
+  const y = s.y - (jumpPx||0);
+  ctx.beginPath(); ctx.ellipse(s.x, s.y+4, 11,4, 0,0,Math.PI*2);
+  ctx.fillStyle='rgba(6,10,14,0.28)'; ctx.fill();
+
+  if (isControlled){
+    ctx.beginPath(); ctx.arc(s.x, y, 16, 0, Math.PI*2);
+    ctx.strokeStyle='#FFD166'; ctx.lineWidth=2; ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(s.x, y, 12, 0, Math.PI*2);
+  ctx.fillStyle=color; ctx.fill();
+  ctx.strokeStyle=dark; ctx.lineWidth=2; ctx.stroke();
+
+  if (p.stats && p.stats.pos){
+    ctx.fillStyle='#F5F3ED';
+    ctx.font='700 9px "Noto Sans KR"';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(p.stats.pos, s.x, y);
+  }
+}
+
+function currentBallScreenPos(){
+  if (shotAnim){
+    const t = clamp(shotAnim.t,0,1);
+    const cx = lerp(shotAnim.fromCx, shotAnim.toCx, t);
+    const cy = lerp(shotAnim.fromCy, shotAnim.toCy, t);
+    const base = w2s(cx,cy);
+    const jump = Math.sin(t*Math.PI)*130;
+    return { x: base.x, y: base.y-95-jump*0 - jump, cx, cy };
+  }
+  if (passAnim){
+    const arr = passAnim.team==='blue'?blue:red;
+    const t = clamp(passAnim.t,0,1);
+    const a = arr[passAnim.fromIdx], b = arr[passAnim.toIdx];
+    const cx = lerp(a.cx,b.cx,t), cy=lerp(a.cy,b.cy,t);
+    const base = w2s(cx,cy);
+    return { x: base.x, y: base.y-16, cx, cy };
+  }
+  const arr = possession==='blue'?blue:red;
+  const p = arr[ballHandlerIdx];
+  const base = w2s(p.cx,p.cy);
+  const bounce = Math.abs(Math.sin(performance.now()/220))*5;
+  return { x: base.x+10, y: base.y-14-bounce, cx:p.cx, cy:p.cy };
+}
+
+function drawBall(){
+  const b = currentBallScreenPos();
+  ctx.beginPath(); ctx.arc(b.x,b.y,7,0,Math.PI*2);
+  ctx.fillStyle='#E67E22'; ctx.fill();
+  ctx.strokeStyle='#3E2A1A'; ctx.lineWidth=1; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(b.x-7,b.y); ctx.lineTo(b.x+7,b.y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(b.x,b.y-7); ctx.lineTo(b.x,b.y+7); ctx.stroke();
+}
+
+function drawGauge(){
+  if (!gaugeActive) return;
+  const barW=200, barX=W/2-barW/2, barY=H-30;
+  const zonesPx = [
+    {f0:0,f1:0.12,c:'#E24B4A'},{f0:0.12,f1:0.32,c:'#EF9F27'},{f0:0.32,f1:0.46,c:'#FAC775'},
+    {f0:0.46,f1:0.54,c:'#5DCAA5'},{f0:0.54,f1:0.68,c:'#FAC775'},{f0:0.68,f1:0.88,c:'#EF9F27'},{f0:0.88,f1:1,c:'#E24B4A'}
+  ];
+  for (const z of zonesPx){
+    ctx.fillStyle=z.c;
+    ctx.fillRect(barX+barW*z.f0, barY, barW*(z.f1-z.f0), 12);
+  }
+  const frac = gaugeFrac();
+  const ix = barX+barW*frac;
+  ctx.fillStyle='#F5F3ED';
+  ctx.fillRect(ix-2, barY-4, 4, 20);
+}
+
+function drawHUD(){
+  ctx.fillStyle='#1B140D'; ctx.fillRect(0,0,W,HUD_H);
+  ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.beginPath(); ctx.moveTo(0,HUD_H); ctx.lineTo(W,HUD_H); ctx.stroke();
+  ctx.textBaseline='middle'; ctx.font='700 15px "Noto Sans KR"';
+  ctx.textAlign='left'; ctx.fillStyle='#5DCAA5'; ctx.fillText(`블루 ${scoreBlue}`, 16, HUD_H/2-8);
+  ctx.textAlign='right'; ctx.fillStyle='#E24B4A'; ctx.fillText(`레드 ${scoreRed}`, W-16, HUD_H/2-8);
+  ctx.textAlign='center'; ctx.fillStyle='#F5F3ED';
+  const m=Math.floor(clock/60), s=Math.floor(clock%60);
+  ctx.fillText(`${m}:${String(s).padStart(2,'0')}`, W/2, HUD_H/2-8);
+
+  ctx.font='500 10.5px "Noto Sans KR"'; ctx.fillStyle='#9C8E7A';
+  ctx.fillText(`조작 중: ${blue[ballHandlerIdx].name}`, W/2, HUD_H/2+10);
+}
+
+function draw(){
+  drawCourt();
+  drawHoop(HOOP_L); drawHoop(HOOP_R);
+  for (let i=0;i<red.length;i++) drawPlayer(red[i], '#D64545','#8E2C2C', possession==='red'&&i===ballHandlerIdx, 0);
+  for (let i=0;i<blue.length;i++) drawPlayer(blue[i], '#3E6BE0','#2A4A9E', possession==='blue'&&i===ballHandlerIdx, 0);
+  if (possession==='red') drawPlayer(blue[ballHandlerIdx], '#3E6BE0','#FFD166', true, 0);
+  if (shotAnim){
+    const t=clamp(shotAnim.t,0,1);
+    const jump=Math.sin(t*Math.PI)*90;
+    const cx=lerp(shotAnim.fromCx,shotAnim.toCx,t), cy=lerp(shotAnim.fromCy,shotAnim.toCy,t);
+    const base=w2s(cx,cy);
+    ctx.beginPath(); ctx.arc(base.x, base.y-jump, 7,0,Math.PI*2);
+    ctx.fillStyle='#E67E22'; ctx.fill();
+  } else {
+    drawBall();
+  }
+  for (const p of particles){
+    ctx.globalAlpha=clamp(p.life/p.maxLife,0,1);
+    ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fillStyle=p.color; ctx.fill();
+    ctx.globalAlpha=1;
+  }
+  drawGauge();
+  drawHUD();
+  drawJumpBallPrompt();
+}
+
+function drawJumpBallPrompt(){
+  if (state!=='jumpball') return;
+  ctx.save();
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#FFD166'; ctx.font='700 20px "Noto Sans KR"';
+  ctx.fillText('점프볼!', W/2, HUD_H+34);
+  ctx.font='600 13px "Noto Sans KR"'; ctx.fillStyle='#F5F3ED';
+  ctx.fillText(gaugeActive ? 'D를 놓아서 판정!' : 'D를 눌러 게이지 시작', W/2, HUD_H+56);
+  ctx.restore();
+}
+
+function loop(ts){
+  const dt=Math.min(0.033,(ts-last)/1000||0);
+  last=ts;
+  if (state!=='select'){
+    if (state==='playing') update(dt);
+    draw();
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
